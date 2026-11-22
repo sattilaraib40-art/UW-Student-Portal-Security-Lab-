@@ -34,18 +34,53 @@ function getSession() {
   return USERS.find((x) => String(x.id) === id) || null;
 }
 
+// A2(a): only these same-site relative pages may be used as ?next= target
+const ALLOWED_NEXT = ["index.html"];
+function isSafeNext(target) {
+  return typeof target === "string" && ALLOWED_NEXT.includes(target);
+}
+
+// A2(c): simple lockout after 3 wrong passwords (browser-side only, see report)
+const MAX_TRIES = 3;
+const LOCK_MS = 30 * 1000;
+
+function lockSecondsLeft() {
+  const until = Number(sessionStorage.getItem("lockUntil") || 0);
+  return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+}
+
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const wait = lockSecondsLeft();
+  if (wait > 0) {
+    $("loginMsg").textContent = "Too many failed attempts. Try again in " + wait + " seconds.";
+    return;
+  }
   const email = $("email").value;
   const pw = $("password").value;
   const u = USERS.find((x) => x.email === email);
   if (!u || (await sha256("uw" + u.id + pw)) !== u.passwordHash) {
-    $("loginMsg").textContent = "Login failed for " + email;
+    const fails = Number(sessionStorage.getItem("fails") || 0) + 1;
+    if (fails >= MAX_TRIES) {
+      sessionStorage.setItem("lockUntil", String(Date.now() + LOCK_MS));
+      sessionStorage.setItem("fails", "0");
+      $("loginMsg").textContent = "Too many failed attempts. Sign-in is blocked for 30 seconds.";
+    } else {
+      sessionStorage.setItem("fails", String(fails));
+      $("loginMsg").textContent = "Login failed for " + email;
+    }
     return;
   }
+  sessionStorage.setItem("fails", "0");
+  sessionStorage.removeItem("lockUntil");
   sessionStorage.setItem("uid", String(u.id));
   const next = params.get("next");
-  if (next) { location.href = next; return; }
+  if (next) {
+    if (isSafeNext(next)) { location.assign(next); return; }
+    render();
+    $("resultOut").textContent = "Redirect blocked: that address is not allowed.";
+    return;
+  }
   render();
 });
 
